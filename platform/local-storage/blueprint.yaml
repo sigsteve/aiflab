@@ -1,0 +1,55 @@
+# Demo-only storage for a local AIFLab cluster that has no default
+# StorageClass. `aiflab/deploy.sh` skips this bundle when the cluster already
+# supplies a default class.
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: aiflab-local-storage-0-1-0
+  labels:
+    ai-factory.suse.com/blueprint-name: aiflab-local-storage
+    ai-factory.suse.com/blueprint-version: 0.1.0
+    ai-factory.suse.com/source: sample
+    app.kubernetes.io/part-of: aiflab-platform
+spec:
+  displayName: AIFLab Demo Local Storage
+  version: 0.1.0
+  description: Single-node default storage for laptop demonstrations only.
+  source: Custom
+  components:
+    - chartRepo: application-collection
+      chartName: local-path-provisioner
+      chartVersion: 0.0.36
+      vendor: suse
+      targetNamespace: local-path-storage
+      values:
+        storageClass:
+          create: true
+          provisionerName: aiflab.suse.com/local-path
+          defaultClass: true
+          defaultVolumeType: hostPath
+          name: aiflab-local-path
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: AIWorkload
+metadata:
+  name: aiflab-local-storage
+  namespace: aiflab-platform
+  labels:
+    app.kubernetes.io/part-of: aiflab-platform
+spec:
+  displayName: AIFLab Demo Local Storage
+  deployStrategy: FleetBundle
+  source:
+    sourceType: Blueprint
+    blueprint:
+      name: aiflab-local-storage
+      version: 0.1.0
+  targetNamespace: local-path-storage
+  targetClusters:
+    - local

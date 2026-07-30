@@ -1,0 +1,1373 @@
+# SUSE AI Factory inference-management MVP.
+#
+# Install (one apply):
+#   kubectl apply -f aiflab/demos/inference-management/blueprint.yaml
+#
+# This is deliberately a lab proof, not production configuration. Search for
+# "INPUT:" before applying outside this isolated test cluster. The three demo
+# ingresses use the current AIFLab node address, 192.168.122.227, through
+# sslip.io. Replace that address everywhere when targeting another cluster.
+# The checked-in credentials are known MVP-only values and MUST be replaced
+# before exposure beyond a trusted lab network.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inference-management # INPUT: namespace (update every occurrence)
+  labels:
+    app.kubernetes.io/part-of: inference-management
+---
+# INPUT: credentials and prompt-capture policy. Keeping this Secret in the
+# single manifest makes the MVP one-apply and reproducible. Replace every
+# CHANGE_ME value before enabling ingress or admitting untrusted users.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: inference-management-secrets
+  namespace: inference-management
+  labels:
+    app.kubernetes.io/part-of: inference-management
+type: Opaque
+stringData:
+  PROXY_MASTER_KEY: "sk-mvp-CHANGE_ME-before-exposure"
+  VLLM_API_KEY: "mvp-vllm-has-no-auth"
+  LANGFUSE_PUBLIC_KEY: "lf_pk_mvp_CHANGE_ME_0000000000000000"
+  LANGFUSE_SECRET_KEY: "lf_sk_mvp_CHANGE_ME_0000000000000000"
+  LANGFUSE_HOST: "http://langfuse-web:3000"
+  LITELLM_OTEL_V2: "true"
+  # INPUT: no_content (privacy default) or span_only (capture prompts/results).
+  OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "no_content"
+  # INPUT: optional token for a gated/private model; blank works for the
+  # public default model.
+  HF_TOKEN: ""
+
+  # Langfuse application and headless bootstrap values.
+  LANGFUSE_SALT: "mvp-only-salt-CHANGE_ME-32-bytes"
+  LANGFUSE_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+  NEXTAUTH_SECRET: "mvp-only-nextauth-CHANGE_ME-32-bytes"
+  LANGFUSE_INIT_ORG_ID: "inference-management"
+  LANGFUSE_INIT_ORG_NAME: "Inference Management MVP"
+  LANGFUSE_INIT_PROJECT_ID: "inference-management"
+  LANGFUSE_INIT_PROJECT_NAME: "Inference Management MVP"
+  LANGFUSE_INIT_PROJECT_PUBLIC_KEY: "lf_pk_mvp_CHANGE_ME_0000000000000000"
+  LANGFUSE_INIT_PROJECT_SECRET_KEY: "lf_sk_mvp_CHANGE_ME_0000000000000000"
+  LANGFUSE_INIT_USER_EMAIL: "mvp@example.invalid"
+  LANGFUSE_INIT_USER_NAME: "MVP Admin"
+  LANGFUSE_INIT_USER_PASSWORD: "MvpOnly-CHANGE_ME-2026"
+
+  # Langfuse backing services.
+  POSTGRESQL_PASSWORD: "MvpPostgresCHANGE2026"
+  CLICKHOUSE_PASSWORD: "MvpClickhouseCHANGE2026"
+  REDIS_PASSWORD: "MvpValkeyCHANGE2026"
+  S3_ROOT_USER: "langfuse"
+  S3_ROOT_PASSWORD: "MvpMinioCHANGE2026"
+
+  # Grafana login.
+  GRAFANA_ADMIN_USER: "admin"
+  GRAFANA_ADMIN_PASSWORD: "MvpGrafana-CHANGE_ME-2026"
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: inference-vllm
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  enabled: true
+  url: https://vllm-project.github.io/production-stack
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: inference-litellm
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  enabled: true
+  url: oci://ghcr.io/berriai
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: inference-langfuse
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  enabled: true
+  url: https://langfuse.github.io/langfuse-k8s
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: inference-dcgm
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  enabled: true
+  url: https://nvidia.github.io/dcgm-exporter/helm-charts
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: inference-management-mvp-0-1-0
+  labels:
+    ai-factory.suse.com/blueprint-name: inference-management-mvp
+    ai-factory.suse.com/blueprint-version: 0.1.0
+    ai-factory.suse.com/source: sample
+    app.kubernetes.io/part-of: inference-management
+  annotations:
+    # Downloaded from the official repositories on 2026-07-14. Versions are
+    # the deployment contract; hashes make repository mutation detectable.
+    inference-management.suse.com/vllm-chart-sha256: "97d9a59ac5dca86c650743ba011dfaef48bc751d838d7d8d262fb49bab9c6f81"
+    inference-management.suse.com/litellm-chart-sha256: "9045af845c91393f1f8377ba3f7587d366767ce92f0fa99e46af6880ebc97071"
+    inference-management.suse.com/litellm-chart-oci-digest: "sha256:243024aa01437456fd93d8c5bdba100ee3a50253de753a6844f128eaca69a25c"
+    inference-management.suse.com/langfuse-chart-sha256: "2b09944fd3669abd47018a7ab1bbffd8dfda0d6587fde6743f429ce71e4759b1"
+    inference-management.suse.com/dcgm-chart-sha256: "1c5535c03ebab3f021444df6016fce1cd7871385122e115c6ed24c804b623803"
+spec:
+  displayName: Inference Management MVP
+  version: 0.1.0
+  source: Custom
+  description: |-
+    Functional inference-management proof: LiteLLM routes OpenAI-compatible
+    traffic to one vLLM model; an isolated Prometheus/Grafana view combines
+    LiteLLM, vLLM, GPU (when present), and Kubernetes health; Langfuse records
+    request-level traces. An in-cluster Job checks direct and proxied inference,
+    a failure, concurrent load, metric ingestion, Langfuse correlation, and
+    LiteLLM restart recovery. This is intentionally non-HA and short-retention.
+  components:
+    # vLLM production-stack 0.1.11 embeds kube-prometheus-stack 82.4.3. Keeping
+    # monitoring in this component means its CRDs and ServiceMonitors are
+    # installed by one Helm operation rather than racing separate components.
+    - chartRepo: inference-vllm
+      chartName: vllm-stack
+      chartVersion: 0.1.11
+      vendor: suse
+      targetNamespace: inference-management
+      values:
+        servingEngineSpec:
+          enableEngine: true
+          runtimeClassName: ""
+          imagePullPolicy: IfNotPresent
+          containerPort: 8000
+          servicePort: 80
+          serviceMonitor:
+            enabled: true
+            interval: 5s
+            scrapeTimeout: 10s
+          modelSpec:
+            # INPUT: CPU-safe demo defaults; a GPU is not an MVP prerequisite.
+            # For GPU mode set repository=vllm/vllm-openai, tag=v0.25.1,
+            # runtimeClassName=nvidia, requestGPU=1 (or desired count), and
+            # GPU_COUNT in the test Job to the same nonzero value.
+            - name: smollm2
+              enabled: true
+              runtimeClassName: ""
+              repository: vllm/vllm-openai-cpu
+              tag: v0.24.0-x86_64
+              modelURL: HuggingFaceTB/SmolLM2-135M-Instruct # INPUT: model id
+              replicaCount: 1
+              requestCPU: "500m"
+              requestMemory: 1500Mi
+              requestGPU: 0 # INPUT: GPU resource count
+              limitCPU: "2"
+              limitMemory: 3Gi
+              # INPUT: model storage. emptyDir is sufficient for this 269 MB
+              # public model; replace with "2Gi" plus storageClass for a PVC.
+              pvcStorage:
+                emptyDir:
+                  sizeLimit: 2Gi
+              enableLoRA: false
+              keda:
+                enabled: false
+              vllmConfig:
+                dtype: float32
+                maxModelLen: 512
+                maxNumSeqs: 8
+                enablePrefixCaching: false
+                enableChunkedPrefill: false
+                extraArgs:
+                  - --revision
+                  - 12fd25f77366fa6b3b4b768ec3050bf629380bac
+                  - --served-model-name
+                  - mvp-model
+              hf_token:
+                secretName: inference-management-secrets
+                secretKey: HF_TOKEN
+
+        # LiteLLM is already the gateway, so a second vLLM router adds no value
+        # to this one-backend MVP.
+        routerSpec:
+          enableRouter: false
+        grafanaDashboards:
+          # The 0.1.11 upstream dashboard contains queries renamed by newer
+          # vLLM releases. The current-metric combined dashboard below replaces it.
+          enabled: false
+
+        kube-prometheus-stack:
+          enabled: true
+          # INPUT: on a cluster with an existing Prometheus Operator, set this
+          # and prometheusOperator.enabled to false. The dedicated Prometheus,
+          # Grafana, and ServiceMonitors can then use the shared operator.
+          crds:
+            enabled: true
+          fullnameOverride: inference-monitoring
+          defaultRules:
+            create: false
+          alertmanager:
+            enabled: false
+          prometheusOperator:
+            enabled: true
+            admissionWebhooks:
+              enabled: false
+            namespaces:
+              # Keep this MVP operator from reconciling monitoring resources
+              # owned by a pre-existing shared stack in other namespaces.
+              releaseNamespace: true
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 250m
+                memory: 192Mi
+          prometheus:
+            prometheusSpec:
+              retention: 6h
+              retentionSize: 1GB
+              serviceMonitorSelectorNilUsesHelmValues: false
+              # null removes the vLLM parent chart's restrictive default. The
+              # kube-prometheus subchart then renders an empty selector, which
+              # selects every ServiceMonitor in the labeled MVP namespace.
+              serviceMonitorSelector: null
+              serviceMonitorNamespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: inference-management
+              podMonitorSelectorNilUsesHelmValues: false
+              podMonitorSelector: {}
+              storageSpec:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    resources:
+                      requests:
+                        storage: 2Gi
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 768Mi
+          grafana:
+            enabled: true
+            fullnameOverride: inference-grafana
+            defaultDashboardsEnabled: false
+            admin:
+              existingSecret: inference-management-secrets
+              userKey: GRAFANA_ADMIN_USER
+              passwordKey: GRAFANA_ADMIN_PASSWORD
+            persistence:
+              enabled: true
+              size: 1Gi
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 300m
+                memory: 384Mi
+            sidecar:
+              dashboards:
+                enabled: true
+                label: grafana_dashboard
+                labelValue: "1"
+                searchNamespace: inference-management
+              datasources:
+                alertmanager:
+                  # Grafana reads only Prometheus in this MVP.
+                  enabled: false
+            service:
+              type: ClusterIP
+            ingress:
+              enabled: true # INPUT: demo ingress toggle
+              ingressClassName: nginx
+              hosts:
+                # INPUT: replace the IP for a different ingress endpoint.
+                - grafana.192.168.122.227.sslip.io
+              tls: [] # HTTP-only MVP; add a matching Secret to enable TLS.
+          kube-state-metrics:
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+              limits:
+                cpu: 200m
+                memory: 192Mi
+          nodeExporter:
+            enabled: false
+          kubeApiServer:
+            enabled: false
+          kubelet:
+            enabled: false
+          coreDns:
+            enabled: false
+          kubeControllerManager:
+            enabled: false
+          kubeEtcd:
+            enabled: false
+          kubeProxy:
+            enabled: false
+          kubeScheduler:
+            enabled: false
+
+        # These resources deliberately live in the monitoring Helm release.
+        # Prometheus CRDs therefore exist before any ServiceMonitor is created.
+        extraObjects:
+          - apiVersion: monitoring.coreos.com/v1
+            kind: ServiceMonitor
+            metadata:
+              name: inference-litellm
+              namespace: inference-management
+              labels:
+                app.kubernetes.io/part-of: inference-management
+            spec:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: litellm
+              namespaceSelector:
+                matchNames:
+                  - inference-management
+              endpoints:
+                - port: http
+                  path: /metrics
+                  interval: 5s
+                  scrapeTimeout: 10s
+                  authorization:
+                    type: Bearer
+                    credentials:
+                      name: inference-management-secrets
+                      key: PROXY_MASTER_KEY
+          - apiVersion: monitoring.coreos.com/v1
+            kind: ServiceMonitor
+            metadata:
+              name: inference-dcgm
+              namespace: inference-management
+              labels:
+                app.kubernetes.io/part-of: inference-management
+            spec:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: dcgm-exporter
+              namespaceSelector:
+                matchNames:
+                  - inference-management
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 5s
+                  scrapeTimeout: 10s
+
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: inference-management-dashboard
+              namespace: inference-management
+              labels:
+                grafana_dashboard: "1"
+                app.kubernetes.io/part-of: inference-management
+            data:
+              inference-management.json: |-
+                {
+                  "annotations":{"list":[]},
+                  "editable":true,
+                  "graphTooltip":1,
+                  "panels":[
+                    {"type":"stat","title":"LiteLLM request rate","gridPos":{"h":6,"w":6,"x":0,"y":0},"fieldConfig":{"defaults":{"unit":"reqps"}},"targets":[{"refId":"A","expr":"sum(rate(litellm_proxy_total_requests_metric_total[2m]))","legendFormat":"requests/s"}]},
+                    {"type":"timeseries","title":"LiteLLM failure rate","gridPos":{"h":6,"w":6,"x":6,"y":0},"fieldConfig":{"defaults":{"unit":"reqps","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"red","value":0.01}]}}},"targets":[{"refId":"A","expr":"sum(rate(litellm_proxy_failed_requests_metric_total[2m]))","legendFormat":"failures/s"}]},
+                    {"type":"timeseries","title":"LiteLLM proxy latency","gridPos":{"h":6,"w":6,"x":12,"y":0},"fieldConfig":{"defaults":{"unit":"s"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.50, sum(rate(litellm_request_total_latency_metric_bucket[2m])) by (le))","legendFormat":"p50"},{"refId":"B","expr":"histogram_quantile(0.95, sum(rate(litellm_request_total_latency_metric_bucket[2m])) by (le))","legendFormat":"p95"}]},
+                    {"type":"timeseries","title":"vLLM time to first token","gridPos":{"h":6,"w":6,"x":18,"y":0},"fieldConfig":{"defaults":{"unit":"s"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))","legendFormat":"p50"},{"refId":"B","expr":"histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))","legendFormat":"p95"}]},
+                    {"type":"timeseries","title":"vLLM inter-token latency","gridPos":{"h":7,"w":6,"x":0,"y":6},"fieldConfig":{"defaults":{"unit":"s"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.50, sum(rate(vllm:inter_token_latency_seconds_bucket[2m])) by (le))","legendFormat":"p50"},{"refId":"B","expr":"histogram_quantile(0.95, sum(rate(vllm:inter_token_latency_seconds_bucket[2m])) by (le))","legendFormat":"p95"}]},
+                    {"type":"timeseries","title":"Token throughput","gridPos":{"h":7,"w":6,"x":6,"y":6},"fieldConfig":{"defaults":{"unit":"ops"}},"targets":[{"refId":"A","expr":"sum(rate(vllm:prompt_tokens_total[2m]))","legendFormat":"input tokens/s"},{"refId":"B","expr":"sum(rate(vllm:generation_tokens_total[2m]))","legendFormat":"output tokens/s"}]},
+                    {"type":"timeseries","title":"vLLM running and waiting","gridPos":{"h":7,"w":6,"x":12,"y":6},"targets":[{"refId":"A","expr":"sum(vllm:num_requests_running)","legendFormat":"running"},{"refId":"B","expr":"sum(vllm:num_requests_waiting)","legendFormat":"waiting"}]},
+                    {"type":"gauge","title":"KV-cache utilization","gridPos":{"h":7,"w":6,"x":18,"y":6},"fieldConfig":{"defaults":{"unit":"percentunit","min":0,"max":1}},"targets":[{"refId":"A","expr":"avg(vllm:kv_cache_usage_perc)","legendFormat":"KV cache"}]},
+                    {"type":"timeseries","title":"GPU utilization (when present)","gridPos":{"h":7,"w":8,"x":0,"y":13},"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}},"targets":[{"refId":"A","expr":"avg(DCGM_FI_DEV_GPU_UTIL) by (Hostname, gpu)","legendFormat":"\u007b\u007bHostname\u007d\u007d GPU \u007b\u007bgpu\u007d\u007d"}]},
+                    {"type":"timeseries","title":"GPU framebuffer memory (when present)","gridPos":{"h":7,"w":8,"x":8,"y":13},"fieldConfig":{"defaults":{"unit":"decmbytes"}},"targets":[{"refId":"A","expr":"DCGM_FI_DEV_FB_USED","legendFormat":"\u007b\u007bHostname\u007d\u007d GPU \u007b\u007bgpu\u007d\u007d used"},{"refId":"B","expr":"DCGM_FI_DEV_FB_FREE","legendFormat":"\u007b\u007bHostname\u007d\u007d GPU \u007b\u007bgpu\u007d\u007d free"}]},
+                    {"type":"timeseries","title":"Request volume: LiteLLM and vLLM","gridPos":{"h":7,"w":8,"x":16,"y":13},"fieldConfig":{"defaults":{"unit":"reqps"}},"targets":[{"refId":"A","expr":"sum(rate(litellm_proxy_total_requests_metric_total[2m]))","legendFormat":"LiteLLM"},{"refId":"B","expr":"sum(rate(vllm:request_success_total[2m]))","legendFormat":"vLLM"}]},
+                    {"type":"stat","title":"Workload pods ready","gridPos":{"h":8,"w":8,"x":0,"y":20},"targets":[{"refId":"A","expr":"min(kube_pod_status_ready{namespace=\"inference-management\",condition=\"true\",pod=~\"(litellm|vllm-stack-.*|langfuse-.*).*\"}) by (pod)","legendFormat":"\u007b\u007bpod\u007d\u007d"}]},
+                    {"type":"timeseries","title":"Pod container restarts (15m)","gridPos":{"h":8,"w":8,"x":8,"y":20},"targets":[{"refId":"A","expr":"sum(increase(kube_pod_container_status_restarts_total{namespace=\"inference-management\",pod=~\"(litellm|vllm-stack-.*|langfuse-.*).*\"}[15m])) by (pod)","legendFormat":"\u007b\u007bpod\u007d\u007d"}]},
+                    {"type":"stat","title":"Prometheus scrape health","gridPos":{"h":8,"w":8,"x":16,"y":20},"fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]}}},"targets":[{"refId":"A","expr":"up{namespace=\"inference-management\"}","legendFormat":"\u007b\u007bservice\u007d\u007d"}]}
+                  ],
+                  "refresh":"10s",
+                  "schemaVersion":41,
+                  "tags":["inference","mvp"],
+                  "templating":{"list":[]},
+                  "time":{"from":"now-30m","to":"now"},
+                  "timezone":"browser",
+                  "title":"Inference Management MVP",
+                  "uid":"inference-management-mvp",
+                  "version":1
+                }
+
+    - chartRepo: inference-litellm
+      chartName: litellm-helm
+      chartVersion: 1.92.0
+      vendor: suse
+      targetNamespace: inference-management
+      values:
+        fullnameOverride: litellm
+        image:
+          repository: ghcr.io/berriai/litellm
+          tag: v1.92.0
+          pullPolicy: IfNotPresent
+        replicaCount: 1
+        masterkeySecretName: inference-management-secrets
+        masterkeySecretKey: PROXY_MASTER_KEY
+        # Map only the keys LiteLLM needs; do not expose the HF, database, or
+        # Grafana credentials from the shared one-file MVP Secret.
+        extraEnvVars:
+          - name: VLLM_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: VLLM_API_KEY
+          - name: LANGFUSE_PUBLIC_KEY
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: LANGFUSE_PUBLIC_KEY
+          - name: LANGFUSE_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: LANGFUSE_SECRET_KEY
+          - name: LANGFUSE_HOST
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: LANGFUSE_HOST
+          - name: LITELLM_OTEL_V2
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: LITELLM_OTEL_V2
+          - name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+            valueFrom:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+        db:
+          useExisting: false
+          deployStandalone: false
+        migrationJob:
+          enabled: false
+        redis:
+          enabled: false
+        proxyConfigMap:
+          create: true
+        proxy_config:
+          model_list:
+            - model_name: mvp-model # INPUT: LiteLLM endpoint/model alias
+              litellm_params:
+                model: hosted_vllm/mvp-model
+                api_base: http://vllm-stack-smollm2-engine-service:80/v1
+                api_key: os.environ/VLLM_API_KEY
+          general_settings:
+            master_key: os.environ/PROXY_MASTER_KEY
+          litellm_settings:
+            callbacks:
+              - prometheus
+              - langfuse_otel
+            drop_params: true
+            request_timeout: 120
+        service:
+          type: ClusterIP
+          port: 4000
+        serviceMonitor:
+          # Owned by the vLLM/monitoring component to avoid a CRD race.
+          enabled: false
+        ingress:
+          enabled: true # INPUT: demo ingress toggle
+          className: nginx
+          hosts:
+            # INPUT: replace the IP for a different ingress endpoint.
+            - host: litellm.192.168.122.227.sslip.io
+              paths:
+                - path: /
+                  pathType: Prefix
+          tls: [] # HTTP-only MVP; add a matching Secret to enable TLS.
+        autoscaling:
+          enabled: false
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+
+    # Langfuse v3 necessarily includes web, worker, PostgreSQL, ClickHouse,
+    # Valkey, and object storage. These values make each one single-node and
+    # small; they do not pretend Langfuse is a one-pod application.
+    - chartRepo: inference-langfuse
+      chartName: langfuse
+      chartVersion: 1.5.39
+      vendor: suse
+      targetNamespace: inference-management
+      values:
+        global:
+          security:
+            allowInsecureImages: true
+        langfuse:
+          image:
+            tag: "3.212.0"
+            pullPolicy: IfNotPresent
+          salt:
+            secretKeyRef:
+              name: inference-management-secrets
+              key: LANGFUSE_SALT
+          encryptionKey:
+            secretKeyRef:
+              name: inference-management-secrets
+              key: LANGFUSE_ENCRYPTION_KEY
+          nextauth:
+            # INPUT: canonical public URL; replace the IP with the ingress
+            # endpoint when targeting another cluster.
+            url: http://langfuse.192.168.122.227.sslip.io
+            secret:
+              secretKeyRef:
+                name: inference-management-secrets
+                key: NEXTAUTH_SECRET
+          features:
+            telemetryEnabled: false
+            signUpDisabled: true
+          web:
+            image:
+              repository: langfuse/langfuse
+              tag: "3.212.0"
+              pullPolicy: IfNotPresent
+            replicas: 1
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 768Mi
+            pod:
+              # Headless bootstrap is needed only by the web process. Map exact
+              # keys rather than importing every credential in the shared Secret.
+              additionalEnv:
+                - name: LANGFUSE_INIT_ORG_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_ORG_ID
+                - name: LANGFUSE_INIT_ORG_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_ORG_NAME
+                - name: LANGFUSE_INIT_PROJECT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_PROJECT_ID
+                - name: LANGFUSE_INIT_PROJECT_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_PROJECT_NAME
+                - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+                - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_PROJECT_SECRET_KEY
+                - name: LANGFUSE_INIT_USER_EMAIL
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_USER_EMAIL
+                - name: LANGFUSE_INIT_USER_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_USER_NAME
+                - name: LANGFUSE_INIT_USER_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: inference-management-secrets
+                      key: LANGFUSE_INIT_USER_PASSWORD
+            pdb:
+              create: false
+          worker:
+            image:
+              repository: langfuse/langfuse-worker
+              tag: "3.212.0"
+              pullPolicy: IfNotPresent
+            replicas: 1
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 768Mi
+            pdb:
+              create: false
+          ingress:
+            enabled: true # INPUT: demo ingress toggle
+            className: nginx
+            hosts:
+              # INPUT: replace the IP for a different ingress endpoint.
+              - host: langfuse.192.168.122.227.sslip.io
+                paths:
+                  - path: /
+                    pathType: Prefix
+            tls:
+              enabled: false # HTTP-only MVP
+        postgresql:
+          deploy: true
+          image:
+            repository: bitnamilegacy/postgresql
+            tag: 17.3.0-debian-12-r1
+          auth:
+            username: postgres
+            database: postgres_langfuse
+            existingSecret: inference-management-secrets
+            secretKeys:
+              adminPasswordKey: POSTGRESQL_PASSWORD
+              userPasswordKey: POSTGRESQL_PASSWORD
+          primary:
+            resourcesPreset: none
+            resources:
+              requests:
+                cpu: 50m
+                memory: 192Mi
+              limits:
+                cpu: 300m
+                memory: 512Mi
+            persistence:
+              enabled: true
+              size: 2Gi
+        clickhouse:
+          deploy: true
+          image:
+            repository: bitnamilegacy/clickhouse
+            tag: 25.2.1-debian-12-r0
+          auth:
+            username: default
+            existingSecret: inference-management-secrets
+            existingSecretKey: CLICKHOUSE_PASSWORD
+          clusterEnabled: false
+          shards: 1
+          replicaCount: 1
+          resourcesPreset: none
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 750m
+              memory: 1Gi
+          persistence:
+            enabled: true
+            size: 2Gi
+          zookeeper:
+            enabled: false
+          keeper:
+            enabled: false
+        redis:
+          deploy: true
+          image:
+            repository: bitnamilegacy/valkey
+            tag: 8.0.2-debian-12-r2
+          auth:
+            username: default
+            existingSecret: inference-management-secrets
+            existingSecretPasswordKey: REDIS_PASSWORD
+          architecture: standalone
+          primary:
+            resourcesPreset: none
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+              limits:
+                cpu: 200m
+                memory: 256Mi
+            persistence:
+              enabled: false
+        s3:
+          deploy: true
+          image:
+            repository: bitnamilegacy/minio
+            tag: 2024.12.18-debian-12-r1
+          mode: standalone
+          auth:
+            existingSecret: inference-management-secrets
+            rootUserSecretKey: S3_ROOT_USER
+            rootPasswordSecretKey: S3_ROOT_PASSWORD
+          resourcesPreset: none
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+          persistence:
+            enabled: false
+
+    # Optional GPU telemetry: runs only on nodes labeled by the NVIDIA GPU
+    # stack. On a CPU-only lab the DaemonSet has zero desired pods, its Grafana
+    # panels remain empty, and the test Job skips GPU assertions.
+    # Disable this component in a derived Blueprint if a shared GPU Operator
+    # already owns DCGM exporter; the Grafana queries remain compatible.
+    - chartRepo: inference-dcgm
+      chartName: dcgm-exporter
+      chartVersion: 4.8.2
+      vendor: suse
+      targetNamespace: inference-management
+      values:
+        image:
+          repository: nvcr.io/nvidia/k8s/dcgm-exporter
+          tag: 4.5.3-4.8.2-distroless
+          pullPolicy: IfNotPresent
+        runtimeClassName: nvidia
+        nodeSelector:
+          nvidia.com/gpu.present: "true"
+        service:
+          enable: true
+          type: ClusterIP
+        serviceMonitor:
+          # Owned by the monitoring component to avoid a CRD race.
+          enabled: false
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: AIWorkload
+metadata:
+  name: inference-management-mvp
+  namespace: inference-management
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  displayName: Inference Management MVP
+  deployStrategy: FleetBundle
+  source:
+    sourceType: Blueprint
+    blueprint:
+      name: inference-management-mvp
+      version: 0.1.0
+  targetNamespace: inference-management
+  targetClusters:
+    - local
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inference-management-test
+  namespace: inference-management
+  labels:
+    app.kubernetes.io/part-of: inference-management
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: inference-management-test
+  namespace: inference-management
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["inference-management-secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["inference-management-test-results"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: inference-management-test
+  namespace: inference-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: inference-management-test
+subjects:
+  - kind: ServiceAccount
+    name: inference-management-test
+    namespace: inference-management
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inference-management-test-0-1-0
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames:
+      - prometheuses.monitoring.coreos.com
+      - servicemonitors.monitoring.coreos.com
+    verbs: ["get"]
+  - nonResourceURLs: ["/version", "/apis", "/apis/*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: inference-management-test-0-1-0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: inference-management-test-0-1-0
+subjects:
+  - kind: ServiceAccount
+    name: inference-management-test
+    namespace: inference-management
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-management-test-results
+  namespace: inference-management
+  labels:
+    app.kubernetes.io/part-of: inference-management
+data:
+  status: PENDING
+  detail: Waiting for the test Job
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inference-management-test-0-1-0
+  namespace: inference-management
+  labels:
+    app.kubernetes.io/part-of: inference-management
+spec:
+  activeDeadlineSeconds: 3600
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: inference-management
+        app.kubernetes.io/component: test
+    spec:
+      serviceAccountName: inference-management-test
+      restartPolicy: Never
+      containers:
+        - name: assertions
+          image: curlimages/curl:8.21.0
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          env:
+            - name: NAMESPACE
+              value: inference-management
+            - name: GPU_COUNT
+              value: "0" # INPUT: keep aligned with requestGPU
+            - name: MODEL_ALIAS
+              value: mvp-model
+            - name: TEST_PROMPT
+              value: "Observability-path functional test" # INPUT
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: PROXY_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: PROXY_MASTER_KEY
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: LANGFUSE_SECRET_KEY
+            - name: CAPTURE_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+            - name: GRAFANA_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: GRAFANA_ADMIN_USER
+            - name: GRAFANA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: inference-management-secrets
+                  key: GRAFANA_ADMIN_PASSWORD
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |-
+              API="https://kubernetes.default.svc"
+              SA="/var/run/secrets/kubernetes.io/serviceaccount"
+              VLLM="http://vllm-stack-smollm2-engine-service"
+              LITELLM="http://litellm:4000"
+              LANGFUSE="http://langfuse-web:3000"
+              PROMETHEUS="http://inference-monitoring-prometheus:9090"
+              GRAFANA="http://inference-grafana"
+              TRACE_ID="$(printf '%s' "$POD_UID" | tr -d '-' | cut -c1-32)"
+              SPAN_ID="$(printf '%s' "$TRACE_ID" | cut -c1-16)"
+              case "$(printf '%s' "$TRACE_ID" | cut -c1)" in
+                f) FAIL_TRACE_ID="e$(printf '%s' "$TRACE_ID" | cut -c2-32)" ;;
+                *) FAIL_TRACE_ID="f$(printf '%s' "$TRACE_ID" | cut -c2-32)" ;;
+              esac
+              MARKER="mvp-observability-$POD_UID"
+              RESPONSE_MARKER="mvp-response-$(printf '%s' "$TRACE_ID" | cut -c1-8)"
+              TEST_PROMPT_JSON="$(printf '%s' "$TEST_PROMPT" | \
+                sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')"
+              RESULT="FAIL"
+              STEP="starting"
+              FAILED_TRACE_STATUS="NOT_CHECKED"
+
+              kube_curl() {
+                curl -fsS --max-time 10 --cacert "$SA/ca.crt" \
+                  -H "Authorization: Bearer $(cat "$SA/token")" "$@"
+              }
+
+              publish() {
+                completed="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
+                body="{\"data\":{\"status\":\"$RESULT\",\"detail\":\"$STEP\",\"marker\":\"$MARKER\",\"traceID\":\"$TRACE_ID\",\"captureMode\":\"$CAPTURE_MODE\",\"failedTraceStatus\":\"$FAILED_TRACE_STATUS\",\"completedAt\":\"$completed\"}}"
+                kube_curl -X PATCH \
+                  -H 'Content-Type: application/merge-patch+json' \
+                  --data "$body" \
+                  "$API/api/v1/namespaces/$NAMESPACE/configmaps/inference-management-test-results" \
+                  >/dev/null 2>&1 || true
+              }
+
+              finish() {
+                rc=$?
+                trap - EXIT
+                publish
+                if [ "$rc" -eq 0 ]; then
+                  printf 'PASS marker=%s trace_id=%s\n' "$MARKER" "$TRACE_ID"
+                else
+                  printf 'FAIL step=%s marker=%s trace_id=%s\n' "$STEP" "$MARKER" "$TRACE_ID" >&2
+                fi
+                exit "$rc"
+              }
+              trap finish EXIT
+
+              wait_url() {
+                name="$1"
+                url="$2"
+                shift 2
+                i=0
+                until curl -fsS --max-time 5 "$@" "$url" >/dev/null 2>&1; do
+                  i=$((i + 1))
+                  if [ "$i" -ge 360 ]; then
+                    printf 'timed out waiting for %s\n' "$name" >&2
+                    return 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              wait_kube_url() {
+                name="$1"
+                url="$2"
+                i=0
+                until kube_curl "$url" >/dev/null 2>&1; do
+                  i=$((i + 1))
+                  if [ "$i" -ge 360 ]; then
+                    printf 'timed out waiting for Kubernetes resource %s\n' "$name" >&2
+                    return 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              metric_sum() {
+                metric="$1"
+                file="$2"
+                awk -v metric="$metric" '
+                  $1 == metric || index($1, metric "{") == 1 { total += $NF }
+                  END { printf "%.9f\n", total + 0 }
+                ' "$file"
+              }
+
+              metric_increased() {
+                before="$1"
+                after="$2"
+                awk -v before="$before" -v after="$after" \
+                  'BEGIN { exit(after > before ? 0 : 1) }'
+              }
+
+              prom_has() {
+                query="$1"
+                curl -fsSG --max-time 10 --data-urlencode "query=$query" \
+                  "$PROMETHEUS/api/v1/query" | grep -q '"result":\[{'
+              }
+
+              wait_prom() {
+                name="$1"
+                query="$2"
+                i=0
+                until prom_has "$query"; do
+                  i=$((i + 1))
+                  if [ "$i" -ge 60 ]; then
+                    printf 'timed out waiting for Prometheus assertion %s\n' "$name" >&2
+                    return 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              pod_restart_sum() {
+                kube_curl "$API/api/v1/namespaces/$NAMESPACE/pods" | \
+                  grep -oE '"restartCount"[[:space:]]*:[[:space:]]*[0-9]+' | \
+                  tr -cd '0-9\n' | awk '{ total += $1 } END { print total + 0 }'
+              }
+
+              selected_pod_uids() {
+                for selector in \
+                  'app.kubernetes.io%2Fname%3Dlitellm' \
+                  'app.kubernetes.io%2Fcomponent%3Dserving-engine' \
+                  'app.kubernetes.io%2Finstance%3Dlangfuse'; do
+                  kube_curl "$API/api/v1/namespaces/$NAMESPACE/pods?labelSelector=$selector"
+                done | grep -oE '"uid"[[:space:]]*:[[:space:]]*"[^"]+"' | \
+                  cut -d '"' -f 4 | sort
+              }
+
+              STEP="prerequisites"
+              kube_curl "$API/version" >/dev/null
+              storage_classes="$(kube_curl "$API/apis/storage.k8s.io/v1/storageclasses")"
+              printf '%s' "$storage_classes" | grep -Eq \
+                '"storageclass(\.beta)?\.kubernetes\.io/is-default-class"[[:space:]]*:[[:space:]]*"true"' || \
+                fail "the cluster has no default StorageClass"
+              kube_curl "$API/api/v1/namespaces/$NAMESPACE/secrets/inference-management-secrets" >/dev/null
+              wait_kube_url Prometheus \
+                "$API/apis/apiextensions.k8s.io/v1/customresourcedefinitions/prometheuses.monitoring.coreos.com"
+              wait_kube_url ServiceMonitor \
+                "$API/apis/apiextensions.k8s.io/v1/customresourcedefinitions/servicemonitors.monitoring.coreos.com"
+              if [ "$GPU_COUNT" -gt 0 ]; then
+                kube_curl "$API/api/v1/nodes" > /tmp/nodes.json
+                available_gpus="$(tr -d '\n' < /tmp/nodes.json | \
+                  grep -oE '"allocatable"[[:space:]]*:[[:space:]]*\{[^}]*\}' | \
+                  grep -oE '"nvidia\.com/gpu"[[:space:]]*:[[:space:]]*"[0-9]+"' | \
+                  tr -cd '0-9\n' | awk '{ total += $1 } END { print total + 0 }')"
+                [ "$available_gpus" -ge "$GPU_COUNT" ]
+              fi
+
+              STEP="wait-for-components"
+              wait_url vLLM "$VLLM/health"
+              wait_url LiteLLM "$LITELLM/health/readiness" \
+                -H "Authorization: Bearer $PROXY_MASTER_KEY"
+              wait_url Langfuse "$LANGFUSE/api/public/ready"
+              wait_url Prometheus "$PROMETHEUS/-/ready"
+              wait_url Grafana "$GRAFANA/api/health"
+              i=0
+              until curl -fsS --max-time 10 \
+                -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+                "$GRAFANA/api/search?query=Inference%20Management%20MVP" | \
+                grep -q '"uid":"inference-management-mvp"'; do
+                i=$((i + 1))
+                [ "$i" -lt 60 ] || exit 1
+                sleep 5
+              done
+
+              # Establish scrape baselines before generating the traffic whose
+              # rates/deltas are asserted later.
+              kube_curl \
+                "$API/api/v1/namespaces/$NAMESPACE/pods?labelSelector=app.kubernetes.io%2Fname%3Dlitellm" \
+                > /tmp/litellm-baseline-pods.json
+              baseline_litellm_pod="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                /tmp/litellm-baseline-pods.json | head -n 1 | cut -d '"' -f 4)"
+              [ -n "$baseline_litellm_pod" ]
+              wait_prom initial-litellm-target \
+                "up{namespace=\"$NAMESPACE\",service=\"litellm\",pod=\"$baseline_litellm_pod\"} == 1"
+              wait_prom initial-vllm-target \
+                "up{namespace=\"$NAMESPACE\",service=\"vllm-stack-smollm2-engine-service\"} == 1"
+              wait_prom initial-kubernetes-health-target \
+                "up{namespace=\"$NAMESPACE\",service=\"vllm-stack-kube-state-metrics\"} == 1"
+              warmup_code="$(curl -sS --max-time 30 -o /tmp/failure-warmup.json \
+                -w '%{http_code}' -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                -H 'Content-Type: application/json' \
+                --data '{"model":"metrics-baseline-does-not-exist","messages":[{"role":"user","content":"metrics baseline"}]}' \
+                "$LITELLM/v1/chat/completions")"
+              case "$warmup_code" in 400|404|422) : ;; *) exit 1 ;; esac
+              wait_prom failure-counter-baseline \
+                "sum(litellm_proxy_failed_requests_metric_total{pod=\"$baseline_litellm_pod\"}) > 0"
+
+              baseline_restarts="$(pod_restart_sum)"
+              baseline_uids="$(selected_pod_uids)"
+              [ -n "$baseline_uids" ]
+
+              STEP="direct-vllm-inference"
+              curl -fsS --max-time 10 "$VLLM/metrics" > /tmp/vllm-before-direct.metrics
+              direct_requests_before="$(metric_sum 'vllm:request_success_total' /tmp/vllm-before-direct.metrics)"
+              direct_prompt_before="$(metric_sum 'vllm:prompt_tokens_total' /tmp/vllm-before-direct.metrics)"
+              direct_generation_before="$(metric_sum 'vllm:generation_tokens_total' /tmp/vllm-before-direct.metrics)"
+              code="$(curl -sS --max-time 180 -o /tmp/direct.json -w '%{http_code}' \
+                -H 'Content-Type: application/json' \
+                --data "{\"model\":\"$MODEL_ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"$TEST_PROMPT_JSON. Reply with a short confirmation. $MARKER\"}],\"temperature\":0,\"max_tokens\":24}" \
+                "$VLLM/v1/chat/completions")"
+              [ "$code" = "200" ]
+              grep -Eq '"object"[[:space:]]*:[[:space:]]*"chat\.completion"' /tmp/direct.json
+              grep -Eq '"model"[[:space:]]*:[[:space:]]*"mvp-model"' /tmp/direct.json
+              grep -Eq '"choices"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{' /tmp/direct.json
+              grep -Eq '"content"[[:space:]]*:[[:space:]]*"[^\"]+' /tmp/direct.json
+              grep -Eq '"prompt_tokens"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/direct.json
+              grep -Eq '"completion_tokens"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/direct.json
+              curl -fsS --max-time 10 "$VLLM/metrics" > /tmp/vllm-after-direct.metrics
+              metric_increased "$direct_requests_before" \
+                "$(metric_sum 'vllm:request_success_total' /tmp/vllm-after-direct.metrics)"
+              metric_increased "$direct_prompt_before" \
+                "$(metric_sum 'vllm:prompt_tokens_total' /tmp/vllm-after-direct.metrics)"
+              metric_increased "$direct_generation_before" \
+                "$(metric_sum 'vllm:generation_tokens_total' /tmp/vllm-after-direct.metrics)"
+
+              STEP="litellm-routing"
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-before-proxy.metrics
+              curl -fsS --max-time 10 "$VLLM/metrics" > /tmp/vllm-before-proxy.metrics
+              proxy_requests_before="$(metric_sum 'litellm_proxy_total_requests_metric_total' /tmp/litellm-before-proxy.metrics)"
+              backend_requests_before="$(metric_sum 'vllm:request_success_total' /tmp/vllm-before-proxy.metrics)"
+              code="$(curl -sS --max-time 180 -o /tmp/proxy.json -w '%{http_code}' \
+                -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                -H 'Content-Type: application/json' \
+                -H "traceparent: 00-$TRACE_ID-$SPAN_ID-01" \
+                --data "{\"model\":\"$MODEL_ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"$TEST_PROMPT_JSON. Reply with exactly $RESPONSE_MARKER and nothing else. $MARKER\"}],\"temperature\":0,\"max_tokens\":24}" \
+                "$LITELLM/v1/chat/completions")"
+              [ "$code" = "200" ]
+              grep -Eq '"object"[[:space:]]*:[[:space:]]*"chat\.completion"' /tmp/proxy.json
+              grep -Eq '"model"[[:space:]]*:[[:space:]]*"mvp-model"' /tmp/proxy.json
+              grep -Eq '"choices"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{' /tmp/proxy.json
+              grep -Eq '"content"[[:space:]]*:[[:space:]]*"[^\"]+' /tmp/proxy.json
+              grep -Fq "$RESPONSE_MARKER" /tmp/proxy.json
+              grep -Eq '"prompt_tokens"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/proxy.json
+              grep -Eq '"completion_tokens"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/proxy.json
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-after-proxy.metrics
+              curl -fsS --max-time 10 "$VLLM/metrics" > /tmp/vllm-after-proxy.metrics
+              metric_increased "$proxy_requests_before" \
+                "$(metric_sum 'litellm_proxy_total_requests_metric_total' /tmp/litellm-after-proxy.metrics)"
+              metric_increased "$backend_requests_before" \
+                "$(metric_sum 'vllm:request_success_total' /tmp/vllm-after-proxy.metrics)"
+
+              STEP="intentional-failure"
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-before-failure.metrics
+              failures_before="$(metric_sum 'litellm_proxy_failed_requests_metric_total' /tmp/litellm-before-failure.metrics)"
+              code="$(curl -sS --max-time 30 -o /tmp/failure.json -w '%{http_code}' \
+                -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                -H 'Content-Type: application/json' \
+                -H "traceparent: 00-$FAIL_TRACE_ID-$SPAN_ID-01" \
+                --data '{"model":"does-not-exist","messages":[{"role":"user","content":"expected failure"}]}' \
+                "$LITELLM/v1/chat/completions")"
+              case "$code" in 400|404|422) : ;; *) exit 1 ;; esac
+              grep -Eq '"(error|detail)"[[:space:]]*:' /tmp/failure.json
+              sleep 2
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-failure.metrics
+              metric_increased "$failures_before" \
+                "$(metric_sum 'litellm_proxy_failed_requests_metric_total' /tmp/litellm-failure.metrics)"
+
+              STEP="concurrent-load"
+              batch=1
+              while [ "$batch" -le 5 ]; do
+                request=1
+                pids=""
+                while [ "$request" -le 4 ]; do
+                  curl -fsS --max-time 180 -o /dev/null \
+                    -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                    -H 'Content-Type: application/json' \
+                    --data "{\"model\":\"$MODEL_ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a detailed 64-word explanation for $MARKER load-$batch-$request\"}],\"temperature\":0,\"max_tokens\":64}" \
+                    "$LITELLM/v1/chat/completions" &
+                  pids="$pids $!"
+                  request=$((request + 1))
+                done
+                for pid in $pids; do
+                  wait "$pid"
+                done
+                batch=$((batch + 1))
+              done
+
+              # The failed call and load must not crash or replace components.
+              [ "$(pod_restart_sum)" = "$baseline_restarts" ]
+              [ "$(selected_pod_uids)" = "$baseline_uids" ]
+
+              STEP="prometheus-ingestion"
+              wait_prom litellm-target \
+                "up{namespace=\"$NAMESPACE\",service=\"litellm\"} == 1"
+              wait_prom vllm-target \
+                "up{namespace=\"$NAMESPACE\",service=\"vllm-stack-smollm2-engine-service\"} == 1"
+              wait_prom kubernetes-health-target \
+                "up{namespace=\"$NAMESPACE\",service=\"vllm-stack-kube-state-metrics\"} == 1"
+              wait_prom litellm-request-rate \
+                'sum(rate(litellm_proxy_total_requests_metric_total[2m])) > 0'
+              wait_prom vllm-request-rate \
+                'sum(rate(vllm:request_success_total[2m])) > 0'
+              wait_prom token-throughput \
+                'sum(rate(vllm:generation_tokens_total[2m])) > 0'
+              wait_prom failure-observed \
+                'sum(increase(litellm_proxy_failed_requests_metric_total[5m])) > 0'
+              wait_prom running-requests-reacted \
+                'max_over_time(vllm:num_requests_running[5m]) > 0'
+              wait_prom workload-pods-ready \
+                "min(kube_pod_status_ready{namespace=\"$NAMESPACE\",condition=\"true\",pod=~\"(litellm|vllm-stack-smollm2|langfuse-(web|worker)).*\"}) == 1"
+              if [ "$GPU_COUNT" -gt 0 ]; then
+                wait_prom dcgm-target \
+                  "up{namespace=\"$NAMESPACE\",service=\"dcgm-exporter\"} == 1"
+                wait_prom gpu-activity \
+                  'max_over_time(DCGM_FI_DEV_GPU_UTIL[5m]) > 0'
+                wait_prom gpu-memory \
+                  'DCGM_FI_DEV_FB_USED > 0'
+              fi
+
+              STEP="langfuse-correlation"
+              i=0
+              while :; do
+                code="$(curl -sS --max-time 10 \
+                  -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+                  -o /tmp/trace.json -w '%{http_code}' \
+                  "$LANGFUSE/api/public/traces/$TRACE_ID" || true)"
+                capture_ok=false
+                if [ "$code" = "200" ] && \
+                   grep -Fq "$MODEL_ALIAS" /tmp/trace.json && \
+                   grep -Eq '"startTime"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/trace.json && \
+                   grep -Eq '"endTime"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/trace.json && \
+                   grep -Eq '"(input|inputTokens|input_tokens|promptTokens)"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/trace.json && \
+                   grep -Eq '"(output|outputTokens|output_tokens|completionTokens)"[[:space:]]*:[[:space:]]*[1-9][0-9]*' /tmp/trace.json && \
+                   ! grep -Eq '"level"[[:space:]]*:[[:space:]]*"ERROR"' /tmp/trace.json; then
+                  case "$CAPTURE_MODE" in
+                    no_content)
+                      if ! grep -Fq "$MARKER" /tmp/trace.json && \
+                         ! grep -Fq "$RESPONSE_MARKER" /tmp/trace.json; then
+                        capture_ok=true
+                      fi
+                      ;;
+                    span_only)
+                      if grep -Fq "$MARKER" /tmp/trace.json && \
+                         grep -Fq "$RESPONSE_MARKER" /tmp/trace.json; then
+                        capture_ok=true
+                      fi
+                      ;;
+                    *)
+                      printf 'unsupported capture mode %s\n' "$CAPTURE_MODE" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
+                [ "$capture_ok" = true ] && break
+                i=$((i + 1))
+                [ "$i" -lt 60 ] || exit 1
+                sleep 5
+              done
+
+              # A failed request trace is integration/version dependent. Report it
+              # explicitly without making this optional path fail the whole MVP.
+              fail_code=000
+              if fetched_code="$(curl -sS --max-time 10 \
+                -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+                -o /tmp/failure-trace.json -w '%{http_code}' \
+                "$LANGFUSE/api/public/traces/$FAIL_TRACE_ID")"; then
+                fail_code="$fetched_code"
+              fi
+              if [ "$fail_code" = "200" ]; then
+                if grep -Eq '"level"[[:space:]]*:[[:space:]]*"ERROR"|"exception[^\"]*"[[:space:]]*:' \
+                  /tmp/failure-trace.json; then
+                  FAILED_TRACE_STATUS="ERROR_RECORDED"
+                else
+                  FAILED_TRACE_STATUS="RECORDED_WITHOUT_ERROR_STATUS"
+                fi
+              else
+                FAILED_TRACE_STATUS="UNSUPPORTED_HTTP_$fail_code"
+              fi
+              printf 'failed-request Langfuse trace status %s\n' "$FAILED_TRACE_STATUS"
+
+              STEP="litellm-restart-recovery"
+              kube_curl \
+                "$API/api/v1/namespaces/$NAMESPACE/pods?labelSelector=app.kubernetes.io%2Fname%3Dlitellm" \
+                > /tmp/litellm-pods-before.json
+              old_pod_name="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                /tmp/litellm-pods-before.json | head -n 1 | cut -d '"' -f 4)"
+              old_pod_uid="$(grep -oE '"uid"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                /tmp/litellm-pods-before.json | head -n 1 | cut -d '"' -f 4)"
+              [ -n "$old_pod_name" ]
+              [ -n "$old_pod_uid" ]
+              kube_curl -X DELETE \
+                -H 'Content-Type: application/json' \
+                --data '{"apiVersion":"v1","kind":"DeleteOptions","gracePeriodSeconds":0}' \
+                "$API/api/v1/namespaces/$NAMESPACE/pods/$old_pod_name" \
+                >/dev/null
+              i=0
+              while :; do
+                kube_curl \
+                  "$API/api/v1/namespaces/$NAMESPACE/pods?labelSelector=app.kubernetes.io%2Fname%3Dlitellm" \
+                  > /tmp/litellm-pods-after.json
+                new_pod_name="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                  /tmp/litellm-pods-after.json | head -n 1 | cut -d '"' -f 4)"
+                new_pod_uid="$(grep -oE '"uid"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                  /tmp/litellm-pods-after.json | head -n 1 | cut -d '"' -f 4)"
+                if [ -n "$new_pod_uid" ] && \
+                   [ "$new_pod_uid" != "$old_pod_uid" ] && \
+                   ! grep -Fq "$old_pod_uid" /tmp/litellm-pods-after.json; then
+                  break
+                fi
+                i=$((i + 1))
+                [ "$i" -lt 120 ] || exit 1
+                sleep 5
+              done
+              wait_url LiteLLM "$LITELLM/health/readiness" \
+                -H "Authorization: Bearer $PROXY_MASTER_KEY"
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-before-recovery.metrics
+              recovery_requests_before="$(metric_sum 'litellm_proxy_total_requests_metric_total' \
+                /tmp/litellm-before-recovery.metrics)"
+              curl -fsS --max-time 180 -o /tmp/recovery.json \
+                -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                -H 'Content-Type: application/json' \
+                --data "{\"model\":\"$MODEL_ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"$MARKER after-restart\"}],\"max_tokens\":8}" \
+                "$LITELLM/v1/chat/completions"
+              grep -Eq '"content"[[:space:]]*:[[:space:]]*"[^\"]+' /tmp/recovery.json
+              curl -fsS --max-time 10 -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+                "$LITELLM/metrics" > /tmp/litellm-after-recovery.metrics
+              metric_increased "$recovery_requests_before" \
+                "$(metric_sum 'litellm_proxy_total_requests_metric_total' /tmp/litellm-after-recovery.metrics)"
+              wait_prom litellm-new-pod-scraped \
+                "up{namespace=\"$NAMESPACE\",service=\"litellm\",pod=\"$new_pod_name\"} == 1"
+
+              STEP="all assertions passed"
+              RESULT="PASS"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

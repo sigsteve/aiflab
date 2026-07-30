@@ -1,0 +1,528 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: aiflab-kubeflow-istio-0-1-0
+  labels:
+    ai-factory.suse.com/blueprint-name: aiflab-kubeflow-istio
+    ai-factory.suse.com/blueprint-version: 0.1.0
+    ai-factory.suse.com/source: sample
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Istio
+  version: 0.1.0
+  description: Service mesh and gateway for the Kubeflow demo.
+  source: Custom
+  components:
+    - chartRepo: application-collection
+      chartName: istio
+      chartVersion: 1.1.3
+      vendor: suse
+      targetNamespace: istio-system
+      values:
+        global:
+          proxy:
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+              limits:
+                cpu: 1000m
+                memory: 512Mi
+        istiod:
+          pilot:
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+        gateway:
+          enabled: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          service:
+            type: NodePort # aiflab:gateway-service-type
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: AIWorkload
+metadata:
+  name: aiflab-kubeflow-istio
+  namespace: aiflab-kubeflow
+  labels:
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Istio
+  deployStrategy: FleetBundle
+  source:
+    sourceType: Blueprint
+    blueprint:
+      name: aiflab-kubeflow-istio
+      version: 0.1.0
+  targetNamespace: istio-system
+  targetClusters:
+    - local
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: aiflab-kubeflow-bootstrap-0-4-0
+  labels:
+    ai-factory.suse.com/blueprint-name: aiflab-kubeflow-bootstrap
+    ai-factory.suse.com/blueprint-version: 0.4.0
+    ai-factory.suse.com/source: sample
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Bootstrap
+  version: 0.4.0
+  description: Registry secret propagation and chart-repository bootstrap for Kubeflow.
+  source: Custom
+  components:
+    - chartRepo: application-collection
+      chartName: external-secrets-operator
+      chartVersion: 2.3.0
+      vendor: suse
+      targetNamespace: kubeflow
+      values:
+        installCRDs: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        webhook:
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+        certController:
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+        extraObjects:
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: default
+              namespace: kubeflow-user-example-com
+            imagePullSecrets:
+              - name: suse-ai-pull-combined
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: default-editor
+              namespace: kubeflow-user-example-com
+            imagePullSecrets:
+              - name: suse-ai-pull-combined
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: eso-kubeflow-reader
+              namespace: kubeflow
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: Role
+            metadata:
+              name: eso-kubeflow-registry-reader
+              namespace: kubeflow
+            rules:
+              - apiGroups:
+                  - ""
+                resources:
+                  - secrets
+                resourceNames:
+                  - suse-ai-pull-combined
+                verbs:
+                  - get
+              - apiGroups:
+                  - authorization.k8s.io
+                resources:
+                  - selfsubjectrulesreviews
+                verbs:
+                  - create
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata:
+              name: eso-kubeflow-registry-reader
+              namespace: kubeflow
+            roleRef:
+              apiGroup: rbac.authorization.k8s.io
+              kind: Role
+              name: eso-kubeflow-registry-reader
+            subjects:
+              - kind: ServiceAccount
+                name: eso-kubeflow-reader
+                namespace: kubeflow
+          # Fleet recursively checks every packaged chart dependency. The
+          # public Kubeflow 0.3.2 archive omits the PostgreSQL package declared
+          # by its Model Registry subchart, so this demo hydrates that one
+          # pinned dependency and serves the result inside the cluster. These
+          # objects are owned by this prerequisite Blueprint through the
+          # upstream chart's supported extraObjects value.
+          - apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: kubeflow-chart-repository
+              namespace: kubeflow
+              labels:
+                app.kubernetes.io/name: kubeflow-chart-repository
+                app.kubernetes.io/part-of: aiflab-kubeflow
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 512Mi
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: kubeflow-chart-repository
+              namespace: kubeflow
+              labels:
+                app.kubernetes.io/name: kubeflow-chart-repository
+                app.kubernetes.io/part-of: aiflab-kubeflow
+            spec:
+              replicas: 1
+              revisionHistoryLimit: 2
+              strategy:
+                type: Recreate
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: kubeflow-chart-repository
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/name: kubeflow-chart-repository
+                    app.kubernetes.io/part-of: aiflab-kubeflow
+                  annotations:
+                    sidecar.istio.io/inject: "false"
+                spec:
+                  automountServiceAccountToken: false
+                  imagePullSecrets:
+                    - name: suse-ai-pull-combined
+                  securityContext:
+                    runAsNonRoot: true
+                    runAsUser: 65532
+                    runAsGroup: 65532
+                    fsGroup: 65532
+                    seccompProfile:
+                      type: RuntimeDefault
+                  initContainers:
+                    - name: fetch-kubeflow
+                      image: dp.apps.rancher.io/containers/bci-busybox:15.7-24.1
+                      imagePullPolicy: IfNotPresent
+                      command:
+                        - /bin/sh
+                        - -ec
+                      args:
+                        - |-
+                          verify_cache() {
+                            test -s /repository/kubeflow-0.3.2.tgz || return 1
+                            test -s /repository/kubeflow-0.3.2.sha256 || return 1
+                            test -s /repository/postgresql-0.5.5.tgz || return 1
+                            test -s /repository/index.yaml || return 1
+                            set -- $(sha256sum /repository/kubeflow-0.3.2.tgz)
+                            archive_sha="$1"
+                            test "${archive_sha}" = "$(cat /repository/kubeflow-0.3.2.sha256)"
+                            grep -Fq "digest: ${archive_sha}" /repository/index.yaml
+                            grep -Fq "http://kubeflow-chart-repository.kubeflow.svc:8080/kubeflow-0.3.2.tgz" \
+                              /repository/index.yaml
+                            echo "a71c2245d3a4c188eda1cc29965e618d4c913058f0c50f1cdd67c9c0f65d418e  /repository/postgresql-0.5.5.tgz" \
+                              | sha256sum -c -
+                            root_metadata="$(tar -xzOf /repository/kubeflow-0.3.2.tgz kubeflow/Chart.yaml)"
+                            printf '%s\n' "${root_metadata}" | grep -Eq '^name: kubeflow$'
+                            printf '%s\n' "${root_metadata}" | grep -Eq '^version: 0\.3\.2$'
+                            nested_metadata="$(tar -xzOf /repository/kubeflow-0.3.2.tgz \
+                              kubeflow/charts/model-registry/charts/postgresql/Chart.yaml)"
+                            printf '%s\n' "${nested_metadata}" | grep -Eq '^name: postgresql$'
+                            printf '%s\n' "${nested_metadata}" | grep -Eq '^version: 0\.5\.5$'
+                          }
+
+                          if verify_cache; then
+                            echo "verified cached Kubeflow 0.3.2 chart"
+                            exit 0
+                          fi
+
+                          rm -rf /work/source /work/kubeflow-0.3.2.tgz
+                          mkdir -p /work/source
+                          wget -q -O /work/kubeflow-0.3.2.tgz \
+                            https://github.com/SUSE/suse-ai-charts/releases/download/kubeflow-0.3.2/kubeflow-0.3.2.tgz
+                          echo "0c27c117e4d9c2d8024d2e66940dac6027fcb4a4890938b38d2959523bcb89e4  /work/kubeflow-0.3.2.tgz" \
+                            | sha256sum -c -
+                          tar -xzf /work/kubeflow-0.3.2.tgz -C /work/source
+                          test -f /work/source/kubeflow/Chart.yaml
+                          test -f /work/source/kubeflow/charts/model-registry/Chart.lock
+                          test ! -e /work/source/kubeflow/charts/model-registry/charts/postgresql-0.5.5.tgz
+                      resources:
+                        requests:
+                          cpu: 10m
+                          memory: 32Mi
+                        limits:
+                          cpu: 250m
+                          memory: 128Mi
+                      securityContext:
+                        allowPrivilegeEscalation: false
+                        readOnlyRootFilesystem: true
+                        capabilities:
+                          drop:
+                            - ALL
+                      volumeMounts:
+                        - name: work
+                          mountPath: /work
+                        - name: repository
+                          mountPath: /repository
+                          readOnly: true
+                    - name: hydrate-kubeflow
+                      image: dp.apps.rancher.io/containers/helm:4.2.3-8.12
+                      imagePullPolicy: IfNotPresent
+                      command:
+                        - /bin/sh
+                        - -ec
+                      args:
+                        - |-
+                          verify_cache() {
+                            test -s /repository/kubeflow-0.3.2.tgz || return 1
+                            test -s /repository/kubeflow-0.3.2.sha256 || return 1
+                            test -s /repository/postgresql-0.5.5.tgz || return 1
+                            test -s /repository/index.yaml || return 1
+                            set -- $(sha256sum /repository/kubeflow-0.3.2.tgz)
+                            archive_sha="$1"
+                            test "${archive_sha}" = "$(cat /repository/kubeflow-0.3.2.sha256)"
+                            echo "a71c2245d3a4c188eda1cc29965e618d4c913058f0c50f1cdd67c9c0f65d418e  /repository/postgresql-0.5.5.tgz" \
+                              | sha256sum -c -
+                            chart_metadata="$(helm show chart /repository/kubeflow-0.3.2.tgz)"
+                            case "${chart_metadata}" in *"name: kubeflow"*) ;; *) return 1 ;; esac
+                            case "${chart_metadata}" in *"version: 0.3.2"*) ;; *) return 1 ;; esac
+                            index="$(cat /repository/index.yaml)"
+                            case "${index}" in *"digest: ${archive_sha}"*) ;; *) return 1 ;; esac
+                            case "${index}" in *"http://kubeflow-chart-repository.kubeflow.svc:8080/kubeflow-0.3.2.tgz"*) ;; *) return 1 ;; esac
+                          }
+
+                          if verify_cache; then
+                            echo "reusing cached Kubeflow 0.3.2 chart"
+                            exit 0
+                          fi
+
+                          rm -rf /publish/*
+                          helm dependency build /work/source/kubeflow/charts/model-registry
+                          echo "a71c2245d3a4c188eda1cc29965e618d4c913058f0c50f1cdd67c9c0f65d418e  /work/source/kubeflow/charts/model-registry/charts/postgresql-0.5.5.tgz" \
+                            | sha256sum -c -
+                          dependency_list="$(helm dependency list /work/source/kubeflow/charts/model-registry)"
+                          case "${dependency_list}" in *postgresql*0.5.5*ok*) ;; *) exit 1 ;; esac
+                          cp /work/source/kubeflow/charts/model-registry/charts/postgresql-0.5.5.tgz \
+                            /publish/postgresql-0.5.5.tgz
+                          helm package /work/source/kubeflow --destination /publish
+                          helm repo index /publish \
+                            --url http://kubeflow-chart-repository.kubeflow.svc:8080
+                          test -s /publish/kubeflow-0.3.2.tgz
+                          test -s /publish/index.yaml
+                          set -- $(sha256sum /publish/kubeflow-0.3.2.tgz)
+                          archive_sha="$1"
+                          index="$(cat /publish/index.yaml)"
+                          case "${index}" in *"digest: ${archive_sha}"*) ;; *) exit 1 ;; esac
+                          case "${index}" in *"http://kubeflow-chart-repository.kubeflow.svc:8080/kubeflow-0.3.2.tgz"*) ;; *) exit 1 ;; esac
+                          printf '%s\n' "${archive_sha}" > /publish/kubeflow-0.3.2.sha256
+                          rm -rf /repository/*
+                          cp /publish/kubeflow-0.3.2.tgz \
+                            /publish/kubeflow-0.3.2.sha256 \
+                            /publish/postgresql-0.5.5.tgz \
+                            /publish/index.yaml /repository/
+                          verify_cache
+                      env:
+                        - name: HOME
+                          value: /tmp
+                        - name: HELM_REGISTRY_CONFIG
+                          value: /registry/config.json
+                        - name: HELM_CACHE_HOME
+                          value: /tmp/helm/cache
+                        - name: HELM_CONFIG_HOME
+                          value: /tmp/helm/config
+                        - name: HELM_DATA_HOME
+                          value: /tmp/helm/data
+                      resources:
+                        requests:
+                          cpu: 25m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
+                      securityContext:
+                        allowPrivilegeEscalation: false
+                        readOnlyRootFilesystem: true
+                        capabilities:
+                          drop:
+                            - ALL
+                      volumeMounts:
+                        - name: work
+                          mountPath: /work
+                        - name: repository
+                          mountPath: /repository
+                        - name: publish
+                          mountPath: /publish
+                        - name: builder-tmp
+                          mountPath: /tmp
+                        - name: registry-auth
+                          mountPath: /registry
+                          readOnly: true
+                    - name: verify-kubeflow
+                      image: dp.apps.rancher.io/containers/bci-busybox:15.7-24.1
+                      imagePullPolicy: IfNotPresent
+                      command:
+                        - /bin/sh
+                        - -ec
+                      args:
+                        - |-
+                          test -s /repository/kubeflow-0.3.2.tgz
+                          test -s /repository/kubeflow-0.3.2.sha256
+                          test -s /repository/postgresql-0.5.5.tgz
+                          test -s /repository/index.yaml
+                          set -- $(sha256sum /repository/kubeflow-0.3.2.tgz)
+                          archive_sha="$1"
+                          test "${archive_sha}" = "$(cat /repository/kubeflow-0.3.2.sha256)"
+                          echo "a71c2245d3a4c188eda1cc29965e618d4c913058f0c50f1cdd67c9c0f65d418e  /repository/postgresql-0.5.5.tgz" \
+                            | sha256sum -c -
+                          grep -Fq "digest: ${archive_sha}" /repository/index.yaml
+                          grep -Fq "http://kubeflow-chart-repository.kubeflow.svc:8080/kubeflow-0.3.2.tgz" \
+                            /repository/index.yaml
+                          root_metadata="$(tar -xzOf /repository/kubeflow-0.3.2.tgz kubeflow/Chart.yaml)"
+                          printf '%s\n' "${root_metadata}" | grep -Eq '^name: kubeflow$'
+                          printf '%s\n' "${root_metadata}" | grep -Eq '^version: 0\.3\.2$'
+                          nested_metadata="$(tar -xzOf /repository/kubeflow-0.3.2.tgz \
+                            kubeflow/charts/model-registry/charts/postgresql/Chart.yaml)"
+                          printf '%s\n' "${nested_metadata}" | grep -Eq '^name: postgresql$'
+                          printf '%s\n' "${nested_metadata}" | grep -Eq '^version: 0\.5\.5$'
+                          echo "verified hydrated Kubeflow 0.3.2 chart ${archive_sha}"
+                      resources:
+                        requests:
+                          cpu: 5m
+                          memory: 16Mi
+                        limits:
+                          cpu: 100m
+                          memory: 64Mi
+                      securityContext:
+                        allowPrivilegeEscalation: false
+                        readOnlyRootFilesystem: true
+                        capabilities:
+                          drop:
+                            - ALL
+                      volumeMounts:
+                        - name: repository
+                          mountPath: /repository
+                          readOnly: true
+                  containers:
+                    - name: repository
+                      image: dp.apps.rancher.io/containers/nginx:1.29.8-7.3
+                      imagePullPolicy: IfNotPresent
+                      command:
+                        - /bin/sh
+                        - -ec
+                      args:
+                        - |-
+                          cat >/tmp/nginx.conf <<'EOF'
+                          pid /tmp/nginx.pid;
+                          error_log /dev/stderr notice;
+                          events {}
+                          http {
+                            access_log /dev/stdout;
+                            client_body_temp_path /tmp/client_temp;
+                            proxy_temp_path /tmp/proxy_temp;
+                            fastcgi_temp_path /tmp/fastcgi_temp;
+                            uwsgi_temp_path /tmp/uwsgi_temp;
+                            scgi_temp_path /tmp/scgi_temp;
+                            server {
+                              listen 8080;
+                              root /srv;
+                              location / { try_files $uri =404; }
+                            }
+                          }
+                          EOF
+                          exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+                      ports:
+                        - name: http
+                          containerPort: 8080
+                          protocol: TCP
+                      readinessProbe:
+                        httpGet:
+                          path: /index.yaml
+                          port: http
+                        periodSeconds: 2
+                        failureThreshold: 30
+                      livenessProbe:
+                        httpGet:
+                          path: /index.yaml
+                          port: http
+                        initialDelaySeconds: 15
+                        periodSeconds: 10
+                      resources:
+                        requests:
+                          cpu: 5m
+                          memory: 16Mi
+                        limits:
+                          cpu: 100m
+                          memory: 64Mi
+                      securityContext:
+                        allowPrivilegeEscalation: false
+                        readOnlyRootFilesystem: true
+                        capabilities:
+                          drop:
+                            - ALL
+                      volumeMounts:
+                        - name: repository
+                          mountPath: /srv
+                          readOnly: true
+                        - name: server-tmp
+                          mountPath: /tmp
+                  volumes:
+                    - name: work
+                      emptyDir: {}
+                    - name: repository
+                      persistentVolumeClaim:
+                        claimName: kubeflow-chart-repository
+                    - name: publish
+                      emptyDir: {}
+                    - name: builder-tmp
+                      emptyDir: {}
+                    - name: server-tmp
+                      emptyDir: {}
+                    - name: registry-auth
+                      secret:
+                        secretName: suse-ai-pull-combined
+                        defaultMode: 292
+                        items:
+                          - key: .dockerconfigjson
+                            path: config.json
+          - apiVersion: v1
+            kind: Service
+            metadata:
+              name: kubeflow-chart-repository
+              namespace: kubeflow
+              labels:
+                app.kubernetes.io/name: kubeflow-chart-repository
+                app.kubernetes.io/part-of: aiflab-kubeflow
+            spec:
+              selector:
+                app.kubernetes.io/name: kubeflow-chart-repository
+              ports:
+                - name: http
+                  port: 8080
+                  targetPort: http
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: AIWorkload
+metadata:
+  name: aiflab-kubeflow-bootstrap
+  namespace: aiflab-kubeflow
+  labels:
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Bootstrap
+  deployStrategy: FleetBundle
+  source:
+    sourceType: Blueprint
+    blueprint:
+      name: aiflab-kubeflow-bootstrap
+      version: 0.4.0
+  targetNamespace: kubeflow
+  targetClusters:
+    - local

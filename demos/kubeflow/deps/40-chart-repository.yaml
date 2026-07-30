@@ -1,0 +1,12 @@
+# The bootstrap Blueprint owns the server behind this URL. Keeping the
+# ClusterRepo in the next ordered stage makes aifctl wait for the hydrated
+# index before the main Kubeflow Blueprint is submitted to AI Factory.
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: aiflab-kubeflow-hydrated
+  labels:
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  enabled: true
+  url: http://kubeflow-chart-repository.kubeflow.svc:8080

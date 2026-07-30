@@ -1,0 +1,540 @@
+# Main Kubeflow deployment. Dependencies under deps/ are applied first by
+# `aifctl blueprint deploy --from aiflab/demos/kubeflow`.
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: aiflab-kubeflow-0-3-0-aiflab-__AIFLAB_DOMAIN_ID__
+  labels:
+    ai-factory.suse.com/blueprint-name: aiflab-kubeflow
+    ai-factory.suse.com/blueprint-version: 0.3.0-aiflab.__AIFLAB_DOMAIN_ID__
+    ai-factory.suse.com/source: sample
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Demo
+  version: 0.3.0-aiflab.__AIFLAB_DOMAIN_ID__
+  description: Experimental Kubeflow deployment with laptop-sized resources.
+  source: Custom
+  components:
+    - chartRepo: aiflab-kubeflow-hydrated
+      chartName: kubeflow
+      chartVersion: 0.3.2
+      vendor: suse
+      targetNamespace: kubeflow
+      values:
+        global:
+          demoMode: true
+        kubeflow-namespace:
+          # External Secrets owns prerequisite resources in this namespace.
+          # Keep the namespace when the main Helm release is removed so its
+          # prerequisite chart repository remains reachable during cleanup.
+          namespace:
+            annotations:
+              helm.sh/resource-policy: keep
+        certManager:
+          install: false
+        istio:
+          install: false
+        preflightChecks:
+          enabled: false
+        kubeflow-istio-resources:
+          # aifctl resolves one cluster-aware base domain before applying this
+          # Blueprint. The wildcard Gateway host routes the dashboard and
+          # serving subdomains; TLS hostname limitations are documented in the
+          # demo README.
+          hostname: "*.__AIFLAB_DOMAIN__"
+          externalDNSEnabled: false
+          tls:
+            source: selfSigned
+            credentialName: kubeflow-gateway-tls
+            httpsRedirect: true
+        central-dashboard:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+          dashboardLinks: |-
+            {
+              "menuLinks": [
+                {"type":"item","link":"/jupyter/","text":"Notebooks","icon":"book"},
+                {"type":"item","link":"/tensorboards/","text":"Tensorboards","icon":"assessment"},
+                {"type":"item","link":"/volumes/","text":"Volumes","icon":"device:storage"},
+                {"type":"item","link":"/kserve-endpoints/","text":"Models","icon":"kubeflow:models"},
+                {"type":"item","link":"/model-registry/","text":"Model Registry","icon":"kubeflow:models"},
+                {"type":"item","link":"/katib/","text":"Experiments (AutoML)","icon":"kubeflow:katib"},
+                {"type":"item","text":"Experiments (KFP)","link":"/pipeline/#/experiments","icon":"done-all"},
+                {"type":"item","link":"/pipeline/#/pipelines","text":"Pipelines","icon":"kubeflow:pipeline-centered"},
+                {"type":"item","link":"/pipeline/#/runs","text":"Runs","icon":"maps:directions-run"},
+                {"type":"item","link":"/pipeline/#/recurringruns","text":"Recurring Runs","icon":"device:access-alarm"},
+                {"type":"item","link":"/pipeline/#/artifacts","text":"Artifacts","icon":"editor:bubble-chart"},
+                {"type":"item","link":"/pipeline/#/executions","text":"Executions","icon":"av:play-arrow"}
+              ],
+              "externalLinks": [],
+              "quickLinks": [
+                {"text":"Upload a pipeline","desc":"Pipelines","link":"/pipeline/"},
+                {"text":"View all pipeline runs","desc":"Pipelines","link":"/pipeline/#/runs"},
+                {"text":"Create a new Notebook server","desc":"Notebook Servers","link":"/jupyter/new?namespace=kubeflow-user-example-com"},
+                {"text":"View Katib Experiments","desc":"Katib","link":"/katib/"}
+              ],
+              "documentationItems": [
+                {"text":"Getting Started with Kubeflow","desc":"Kubeflow documentation","link":"https://www.kubeflow.org/docs/started/getting-started/"}
+              ]
+            }
+        oauth2-proxy:
+          replicaCount: 1
+          podDisruptionBudget:
+            enabled: false
+          extraEnv:
+            - name: OAUTH2_PROXY_COOKIE_SECURE
+              value: "true"
+            - name: OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY
+              value: "false"
+            - name: OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS
+              value: "true"
+            - name: OAUTH2_PROXY_EXTRA_JWT_ISSUERS
+              value: http://kubeflow-dex.kubeflow.svc.cluster.local:5556/dex=kubeflow-oidc-authservice
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          # Applied only after the External Secrets Blueprint has installed
+          # its CRDs. Keeping these in the earlier Helm release
+          # makes Fleet discovery reject the custom resources before CRD apply.
+          extraObjects:
+            - apiVersion: external-secrets.io/v1
+              kind: ClusterSecretStore
+              metadata:
+                name: kubeflow-registry-secrets
+              spec:
+                provider:
+                  kubernetes:
+                    remoteNamespace: kubeflow
+                    auth:
+                      serviceAccount:
+                        name: eso-kubeflow-reader
+                        namespace: kubeflow
+                    server:
+                      caProvider:
+                        type: ConfigMap
+                        name: kube-root-ca.crt
+                        key: ca.crt
+                        namespace: kubeflow
+            - apiVersion: external-secrets.io/v1
+              kind: ClusterExternalSecret
+              metadata:
+                name: kubeflow-profile-registry-secret
+              spec:
+                namespaceSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: kubeflow-profile
+                refreshTime: 1m
+                externalSecretSpec:
+                  refreshInterval: 1m
+                  secretStoreRef:
+                    name: kubeflow-registry-secrets
+                    kind: ClusterSecretStore
+                  target:
+                    name: suse-ai-pull-combined
+                    creationPolicy: Owner
+                    deletionPolicy: Delete
+                    template:
+                      type: kubernetes.io/dockerconfigjson
+                  data:
+                    - secretKey: .dockerconfigjson
+                      remoteRef:
+                        key: suse-ai-pull-combined
+                        property: .dockerconfigjson
+            - apiVersion: external-secrets.io/v1
+              kind: ClusterExternalSecret
+              metadata:
+                name: kubeflow-knative-registry-secret
+              spec:
+                namespaceSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: knative-serving
+                refreshTime: 1m
+                externalSecretSpec:
+                  refreshInterval: 1m
+                  secretStoreRef:
+                    name: kubeflow-registry-secrets
+                    kind: ClusterSecretStore
+                  target:
+                    name: suse-ai-pull-combined
+                    creationPolicy: Owner
+                    deletionPolicy: Delete
+                    template:
+                      type: kubernetes.io/dockerconfigjson
+                  data:
+                    - secretKey: .dockerconfigjson
+                      remoteRef:
+                        key: suse-ai-pull-combined
+                        property: .dockerconfigjson
+        dex:
+          podDisruptionBudget:
+            enabled: false
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+        notebooks:
+          controller:
+            enabled: true
+          webApp:
+            enabled: true
+        profiles:
+          enabled: true
+        jupyter-web-app:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+        notebook-controller:
+          cullingPolicy:
+            enableCulling: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+        profiles-and-kfam:
+          kfam:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 64Mi
+          profileController:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 64Mi
+        admission-webhook:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+        pipelines:
+          enabled: true
+          pdb:
+            enabled: false
+          apiServer:
+            resources:
+              requests:
+                cpu: 40m
+                memory: 256Mi
+          frontend:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          persistenceAgent:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 128Mi
+          scheduledWorkflow:
+            resources:
+              requests:
+                cpu: 15m
+                memory: 64Mi
+          viewerCrdController:
+            resources:
+              requests:
+                cpu: 15m
+                memory: 64Mi
+          visualizationServer:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 128Mi
+          cacheServer:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          workflowController:
+            resources:
+              requests:
+                cpu: 25m
+                memory: 128Mi
+          metadataGrpc:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 128Mi
+          metadataEnvoy:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          metadataWriter:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          metacontroller:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 64Mi
+          profileController:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          seaweedfs:
+            persistence:
+              size: 2Gi
+            resources:
+              requests:
+                cpu: 20m
+                memory: 128Mi
+          mariadb:
+            backup:
+              enabled: false
+            persistence:
+              resources:
+                requests:
+                  storage: 2Gi
+            podTemplates:
+              containers:
+                mariadb:
+                  resources:
+                    requests:
+                      cpu: 20m
+                      memory: 256Mi
+        knativeServing:
+          enabled: true
+          domain: "__AIFLAB_DOMAIN__"
+          controller:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 64Mi
+          activator:
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+          autoscaler:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 64Mi
+          webhook:
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+          netIstioController:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+          netIstioWebhook:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+        knativeEventing:
+          enabled: false
+        katib:
+          enabled: true
+          controller:
+            resources:
+              requests:
+                cpu: 15m
+                memory: 64Mi
+          dbManager:
+            resources:
+              requests:
+                cpu: 15m
+                memory: 64Mi
+          ui:
+            resources:
+              requests:
+                cpu: 15m
+                memory: 64Mi
+          mariadb:
+            persistence:
+              storageSize: 2Gi
+            resources:
+              requests:
+                cpu: 15m
+                memory: 128Mi
+        kserve:
+          enabled: true
+          # This value is independent of knativeServing.domain after Helm has
+          # expanded the upstream YAML anchors, so render both explicitly.
+          ingressDomain: "__AIFLAB_DOMAIN__"
+          # The upstream value is JSON stored in a scalar. Override the full
+          # pinned 0.3.2 value so generated InferenceService URLs agree with
+          # the HTTPS gateway above.
+          inferenceServiceConfig:
+            ingress: |-
+              {
+                "ingressGateway": "kubeflow/kubeflow-gateway",
+                "ingressService": "istio.istio-system.svc.cluster.local",
+                "localGateway": "knative-serving/knative-local-gateway",
+                "localGatewayService": "knative-local-gateway.istio-system.svc.cluster.local",
+                "ingressDomain": "__AIFLAB_DOMAIN__",
+                "ingressClassName": "istio",
+                "domainTemplate": "{{ .Name }}-{{ .Namespace }}.{{ .IngressDomain }}",
+                "urlScheme": "https",
+                "disableIstioVirtualHost": false
+              }
+          controllerManager:
+            resources:
+              requests:
+                cpu: 25m
+                memory: 128Mi
+              limits:
+                cpu: 250m
+                memory: 300Mi
+          kubeRbacProxy:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                cpu: 100m
+                memory: 128Mi
+        models-web-app:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi
+        modelRegistry:
+          enabled: true
+          # This dependency is declared upstream but omitted from the public
+          # Kubeflow archive. The prerequisite Blueprint hydrates the exact
+          # pinned package, so PostgreSQL remains owned by this Helm release.
+          postgresql:
+            auth:
+              database: catalog
+              username: catalog
+              existingSecret: model-catalog-postgres
+              passwordKey: password
+              postgresPasswordKey: postgres-password
+              replicationPasswordKey: replicationPassword
+            persistence:
+              enabled: true
+              resources:
+                requests:
+                  storage: 2Gi
+            podTemplates:
+              annotations:
+                sidecar.istio.io/inject: "false"
+              containers:
+                postgresql:
+                  resources:
+                    requests:
+                      cpu: 20m
+                      memory: 128Mi
+            metrics:
+              enabled: false
+          catalog:
+            enabled: true
+            # The Catalog service imports metadata for these public models at
+            # startup. Set model-catalog-hf-secret/HF_API_KEY to avoid public
+            # Hugging Face API rate limits or to demonstrate gated models.
+            sources: |-
+              catalogs:
+                - name: Hugging Face Demo
+                  id: huggingface-demo
+                  type: hf
+                  enabled: true
+                  includedModels:
+                    - microsoft/phi-2
+                    - HuggingFaceTB/SmolLM2-360M-Instruct
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+          server:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 128Mi
+          ui:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 128Mi
+        trainingOperator:
+          enabled: true
+        trainer:
+          enabled: true
+          resources:
+            requests:
+              cpu: 15m
+              memory: 64Mi
+          runtimes:
+            enabled: true
+            torchtune:
+              enabled: false
+        training-operator:
+          resources:
+            requests:
+              cpu: 15m
+              memory: 64Mi
+        volumesWebApp:
+          enabled: true
+        volumes-web-app:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 128Mi
+        pvcviewer-controller:
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+        tensorboard:
+          controller:
+            enabled: true
+          webApp:
+            enabled: true
+        tensorboard-controller:
+          manager:
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+          kubeRbacProxy:
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+        tensorboards-web-app:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 128Mi
+        monitoring:
+          enabled: false
+        externaldns:
+          enabled: false
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: AIWorkload
+metadata:
+  name: aiflab-kubeflow
+  namespace: aiflab-kubeflow
+  annotations:
+    aiflab.suse.com/access-url: "https://kubeflow.__AIFLAB_DOMAIN__"
+    aiflab.suse.com/access-service: istio-system/istio
+    aiflab.suse.com/access-service-port: "443"
+  labels:
+    app.kubernetes.io/part-of: aiflab-kubeflow
+spec:
+  displayName: AIFLab Kubeflow Demo
+  deployStrategy: FleetBundle
+  source:
+    sourceType: Blueprint
+    blueprint:
+      name: aiflab-kubeflow
+      version: 0.3.0-aiflab.__AIFLAB_DOMAIN_ID__
+  targetNamespace: kubeflow
+  targetClusters:
+    - local

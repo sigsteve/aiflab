@@ -273,7 +273,11 @@ export INSTALL_RUNTIME=k3s
 - `RANCHER_CHART_VERSION`: optional Rancher chart version pin.
 - `RANCHER_INGRESS_CLASS`: optional ingress class override.
 - `RANCHER_INGRESS_READY_TIMEOUT`: ingress readiness timeout. Default `300`.
-- `AIF_CHART_VERSION`: AI Factory operator chart version. Default `2.0.1`.
+- `AIF_CHART_VERSION`: optional AI Factory operator chart version or SemVer
+  constraint. By default Helm resolves the latest stable chart at install time;
+  that chart supplies matching operator and UI image versions. Set an exact
+  version (for example, `2.2.0`) for a reproducible pin, or a constraint (for
+  example, `^2.0.0`) to receive compatible updates within a release line.
 - `AIF_CREDENTIALS_TIMEOUT_SECONDS`: Settings and repository timeout. Default
   `300`.
 

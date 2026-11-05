@@ -5,18 +5,20 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 . "${SCRIPT_DIR}/common.sh"
 
+wait_for_resource() {
+  local resource="$1"
+
+  log "waiting for ${resource} (timeout ${AIF_TIMEOUT})"
+  kubectl wait --for=create "${resource}" --timeout="${AIF_TIMEOUT}" >/dev/null ||
+    die "could not wait for ${resource} to be created within ${AIF_TIMEOUT}; inspect the owning controller's pods and logs"
+}
+
 wait_for_crd() {
   local crd="$1"
 
-  for _ in $(seq 1 60); do
-    if kubectl get "crd/${crd}" >/dev/null 2>&1; then
-      kubectl wait --for=condition=Established "crd/${crd}" --timeout="${AIF_TIMEOUT}" >/dev/null
-      return
-    fi
-    sleep 2
-  done
-
-  die "timed out waiting for CRD ${crd}"
+  wait_for_resource "crd/${crd}"
+  kubectl wait --for=condition=Established "crd/${crd}" --timeout="${AIF_TIMEOUT}" >/dev/null ||
+    die "CRD ${crd} did not become Established within ${AIF_TIMEOUT}"
 }
 
 resolve_aif_chart_version() {
@@ -62,10 +64,19 @@ else
   log "resolved AI Factory chart constraint ${requested_chart_version} to ${resolved_chart_version}"
 fi
 
-log "checking Rancher and cert-manager CRDs"
+log "checking cert-manager, Rancher, and Fleet prerequisites"
+# Rancher installs Fleet asynchronously, after its own rollout and /ping are
+# ready. Helm validates release resource kinds before running pre-install
+# hooks, so the chart's readiness hook cannot protect its partner GitRepo from
+# a missing Fleet CRD. Wait here, before invoking Helm.
 wait_for_crd certificates.cert-manager.io
 wait_for_crd clusterrepos.catalog.cattle.io
 wait_for_crd uiplugins.catalog.cattle.io
+wait_for_crd bundles.fleet.cattle.io
+wait_for_crd gitrepos.fleet.cattle.io
+wait_for_crd bundledeployments.fleet.cattle.io
+wait_for_resource namespace/fleet-local
+wait_for_resource namespace/cattle-ui-plugin-system
 
 log "installing AIF operator chart"
 helm upgrade --install "${AIF_RELEASE}" "${AIF_CHART}" \

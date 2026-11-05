@@ -278,6 +278,9 @@ export INSTALL_RUNTIME=k3s
   that chart supplies matching operator and UI image versions. Set an exact
   version (for example, `2.2.0`) for a reproducible pin, or a constraint (for
   example, `^2.0.0`) to receive compatible updates within a release line.
+- `AIF_TIMEOUT`: timeout for each AI Factory prerequisite wait and the operator
+  Helm install. Default `600s`. The wrapper's `--timeout` option controls
+  Blueprint deployment, not the base installation.
 - `AIF_CREDENTIALS_TIMEOUT_SECONDS`: Settings and repository timeout. Default
   `300`.
 
@@ -290,6 +293,44 @@ refresh the user kubeconfig:
 aiflab/scripts/01-install-runtime.sh
 source aiflab/scripts/common.sh
 kubectl get pods -A
+```
+
+## Recovering An AI Factory Prerequisite Failure
+
+Rancher can finish its rollout and answer `/ping` before it finishes installing
+Fleet. AI Factory chart `2.4.0` enables the partner blueprint catalog by default,
+which creates `GitRepo/fleet-local/aif-partner-blueprints`. If Fleet is still
+starting, Helm reports `no matches for kind "GitRepo" in version
+"fleet.cattle.io/v1alpha1"`. Helm validates resource kinds before it can run the
+chart's readiness hook.
+
+Step `04-install-aif-operator.sh` waits for the cert-manager, Rancher catalog,
+and Fleet CRDs to exist and become `Established`, and for `fleet-local` and
+`cattle-ui-plugin-system` to exist, before invoking Helm. If a prerequisite wait
+fails, inspect Rancher and Fleet without reinstalling Kubernetes:
+
+```bash
+source aiflab/scripts/common.sh
+kubectl get crd bundles.fleet.cattle.io gitrepos.fleet.cattle.io bundledeployments.fleet.cattle.io
+kubectl -n cattle-fleet-system get deployments,pods,jobs
+helm list -n cattle-fleet-system
+kubectl -n cattle-system logs deploy/rancher --tail=100
+```
+
+Once Fleet is healthy, retry the AI Factory step, then configure credentials
+explicitly. From the directory containing the `aiflab` checkout:
+
+```bash
+AIF_TIMEOUT=30m aiflab/scripts/04-install-aif-operator.sh
+./aiflab/deploy.sh --skip-base --env-file ~/.config/aiflab/credentials.env
+```
+
+Run the prerequisite and version-selection regression tests without changing a
+cluster:
+
+```bash
+bash aiflab/tests/aif-operator-readiness.sh
+bash aiflab/tests/aif-operator-version.sh
 ```
 
 

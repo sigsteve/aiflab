@@ -1,0 +1,20 @@
+# Copy this file outside the directory Fleet will synchronize, then edit the
+# repository URL, branch, and paths before applying it. Secret references are
+# optional for a public HTTPS Git repository.
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Settings
+metadata:
+  name: settings
+  namespace: aif-operator
+spec:
+  blueprintCatalogs:
+    - name: aiflab-examples
+      repoURL: https://github.com/YOUR_ORG/YOUR_CATALOG.git
+      branch: main
+      # Relative to the Git repository root. Includes the catalog AND blueprints.
+      paths:
+        - catalogs/example
+      # For private HTTPS Git, reference an existing Secret in aif-operator.
+      # username: your-git-account
+      # credSecretRef: {name: catalog-git-credentials, key: token}
+      # caBundleSecretRef: {name: catalog-git-ca, key: ca.crt}

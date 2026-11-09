@@ -1,0 +1,25 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: aiflab-example-ollama-0-1-0
+  labels:
+    ai-factory.suse.com/blueprint-name: aiflab-example-ollama
+    ai-factory.suse.com/blueprint-version: 0.1.0
+    app.kubernetes.io/part-of: aiflab-catalog-example
+spec:
+  displayName: AIFLab Example Ollama
+  version: 0.1.0
+  # This is an author-declared badge. Use Custom for an internal custom blueprint.
+  source: Partner
+  description: >-
+    Single-component catalog example using the Ollama chart defaults. Requires
+    Application Collection credentials. Review chart values, storage, and model
+    requirements before creating an AIWorkload. Registering this Blueprint only
+    adds it to the catalog.
+  components:
+    - chartRepo: application-collection
+      chartName: ollama
+      # Verified in the lab's Application Collection index on 2026-11-05.
+      chartVersion: 1.95.0
+      vendor: suse
+      values: {}

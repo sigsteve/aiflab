@@ -19,7 +19,9 @@ a demonstration with ordered dependencies follow the same path.
 - `deploy.sh`: installs the base and optionally passes `--from` to `aifctl`.
 - `scripts/`: individual base-install steps and shared shell helpers.
 - `platform/`: shared demo infrastructure installed through AI Factory.
+- `catalogs/`: custom Blueprint catalog examples for local apply or Git sync.
 - `demos/kubeflow/`: structured, ordered Kubeflow deployment bundle.
+- `demos/inference/`: open CPU inference, tenant cost showback, a live dashboard, and model canary/promotion/rollback with AppCo Ollama.
 - `tests/`: host-side regression tests.
 - `aifctl/`: self-contained source, tests, and build for the experimental
   AIFLab client.
@@ -165,6 +167,15 @@ Run its regression test without changing a cluster:
 ```bash
 aiflab/tests/credential-env.sh
 ```
+
+## Custom Blueprint Catalogs
+
+Register your own `BlueprintCatalog` and `Blueprint` resources from a local
+directory, or configure a custom Git catalog that Fleet keeps synchronized.
+The [catalog guide](catalogs/README.md) includes an apply-ready example, a
+Settings manifest for your own repository, and links to the upstream docs.
+Catalog registration adds entries to the Blueprints UI; an AIWorkload installs
+their components when you choose to deploy one.
 
 ## Deploying Blueprints
 

@@ -1,0 +1,18 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: BlueprintCatalog
+metadata:
+  name: aiflab-examples
+  labels:
+    app.kubernetes.io/part-of: aiflab-catalog-example
+spec:
+  displayName: AIFLab Example Catalog
+  description: Starter catalog for locally authored or Git-synchronized blueprints.
+  maintainer:
+    name: AIFLab
+  categories:
+    - inference
+  blueprints:
+    # Membership refers to the Blueprint's family label, not its versioned name.
+    - name: aiflab-example-ollama
+      category: inference
+      featured: true

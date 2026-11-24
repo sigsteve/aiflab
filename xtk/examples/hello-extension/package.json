@@ -1,0 +1,30 @@
+{
+  "name": "xtk-hello",
+  "description": "Minimal SUSE AI Factory extension built with XTK",
+  "version": "0.1.1",
+  "private": false,
+  "license": "Apache-2.0",
+  "rancher": {
+    "annotations": {
+      "catalog.cattle.io/display-name": "XTK Hello",
+      "catalog.cattle.io/rancher-version": ">= 2.13.0-0 < 2.17.0",
+      "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@aif-xtk/sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "5.0.9",
+    "@vue/cli-plugin-typescript": "5.0.9",
+    "@vue/cli-service": "5.0.8"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+}

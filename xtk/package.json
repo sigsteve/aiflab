@@ -1,0 +1,37 @@
+{
+  "name": "aif-xtk",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "overrides": {
+    "webpack": "$webpack"
+  },
+  "scripts": {
+    "build": "node scripts/build-examples.mjs",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "lint": "node_modules/@rancher/shell/scripts/lint --ext .ts,.vue packages examples",
+    "new": "node scripts/new-extension.mjs",
+    "test": "node --test packages/sdk/tests/*.test.ts",
+    "typecheck": "npm run typecheck:sdk && npm run typecheck:examples",
+    "typecheck:examples": "node_modules/.bin/vue-tsc --noEmit -p examples/hello-extension/tsconfig.json && node_modules/.bin/vue-tsc --noEmit -p examples/rbac-k8s-extension/tsconfig.json && node_modules/.bin/vue-tsc --noEmit -p examples/modelprobe-extension/tsconfig.json",
+    "typecheck:sdk": "node_modules/.bin/tsc --noEmit -p packages/sdk/tsconfig.json"
+  },
+  "devDependencies": {
+    "@rancher/shell": "3.0.14",
+    "@types/node": "25.0.3",
+    "@vue/cli-plugin-babel": "5.0.9",
+    "@vue/cli-plugin-typescript": "5.0.9",
+    "@vue/cli-service": "5.0.8",
+    "eslint": "10.15.0",
+    "playwright": "1.65.1",
+    "typescript": "5.6.3",
+    "vue-tsc": "3.3.14",
+    "webpack": "5.113.0"
+  }
+}

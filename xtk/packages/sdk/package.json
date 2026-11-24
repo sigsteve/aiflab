@@ -1,0 +1,20 @@
+{
+  "name": "@aif-xtk/sdk",
+  "version": "0.1.0",
+  "description": "Typed zero-patch registration SDK for SUSE AI Factory extensions",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

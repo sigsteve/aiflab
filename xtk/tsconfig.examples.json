@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "baseUrl": ".",
+    "esModuleInterop": true,
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "noEmit": true,
+    "paths": {
+      "@aif-xtk/sdk": [
+        "packages/sdk/src/index.ts"
+      ],
+      "@components/*": [
+        "node_modules/@rancher/shell/rancher-components/*"
+      ],
+      "@shell/*": [
+        "node_modules/@rancher/shell/*"
+      ]
+    },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2018",
+    "typeRoots": [
+      "node_modules/@types",
+      "node_modules/@rancher/shell/types"
+    ],
+    "types": [
+      "node",
+      "rancher",
+      "shell"
+    ]
+  }
+}

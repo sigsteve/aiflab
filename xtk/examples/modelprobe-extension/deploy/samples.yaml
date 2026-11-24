@@ -1,0 +1,19 @@
+apiVersion: xtk.aiflab.io/v1alpha1
+kind: ModelProbe
+metadata:
+  name: healthy-ui
+  namespace: xtk-system
+spec:
+  url: http://xtk-modelprobe-server.cattle-ui-plugin-system.svc:8080/healthz
+  intervalSeconds: 10
+  expectStatus: 200
+---
+apiVersion: xtk.aiflab.io/v1alpha1
+kind: ModelProbe
+metadata:
+  name: unhealthy-dns
+  namespace: xtk-system
+spec:
+  url: http://does-not-exist.xtk-system.svc:8080/healthz
+  intervalSeconds: 10
+  expectStatus: 200
